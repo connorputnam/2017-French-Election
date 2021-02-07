@@ -1,0 +1,160 @@
+---
+title: "2017 French Election Visualization"
+author: "Connor Putnam"
+date: "2/6/2021"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+#library(dplyr)
+library(ggplot2)
+library(stringi)
+library(ggvis)
+#library(plotly)
+library(foreign)
+library(hablar)
+library(shiny)
+library(scales)
+library(ggthemes)
+library(readxl)
+```
+
+```{r}
+#hopefully this is reproducible...
+election <- read.csv("Presidentielle_2017_Resultats_Communes_Tour_2_c.csv")
+
+```
+```{r}
+unemploymentRate <- read_excel("FrenchEmployment.xls", 
+    col_types = c("skip", "text", "numeric"))
+
+FrenchEconomicDataset <- read_excel("FrenchEconomicDataset.xlsx", 
+    col_types = c("text", "numeric", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "numeric", "text"))
+
+FrenchEconomicDataset$City[is.na(FrenchEconomicDataset$City)] <- " "
+```
+
+
+
+```{r}
+unemploymentRate$region <- stri_trans_general(unemploymentRate$region, "Latin-ASCII")
+unemploymentRate <- unemploymentRate %>%
+  mutate(region = recode(region, `Corse-du-Sud` = "Corse du Sud")) %>%
+  mutate(region = recode(region, `Cote-d'Or` = "Cote-Dor")) %>%
+  mutate(region = recode(region, `Cotes-d'Armor` = "Cotes-Darmor")) %>%
+  mutate(region = recode(region, `Val-d'Oise` = "Val-Doise"))
+
+FrenchEconomicDataset$region <- stri_trans_general(FrenchEconomicDataset$region, "Latin-ASCII")
+FrenchEconomicDataset <- FrenchEconomicDataset %>%
+  mutate(region = recode(region, `Corse-du-Sud` = "Corse du Sud")) %>%
+  mutate(region = recode(region, `Cote-d'Or` = "Cote-Dor")) %>%
+  mutate(region = recode(region, `Cotes-d'Armor` = "Cotes-Darmor")) %>%
+  mutate(region = recode(region, `Val-d'Oise` = "Val-Doise"))
+
+```
+
+
+```{r}
+electionResults <- election %>%
+  select(Libellé.du.département, Voix, Voix.1) %>%
+  rename(Department = Libellé.du.département,
+         MarconVote = Voix,
+         LePenVote = Voix.1) %>%
+  group_by(Department) %>%
+  summarise(NumMarcon = sum(MarconVote), NumLePen = sum(LePenVote)) %>%
+  mutate(total = NumMarcon + NumLePen) %>%
+  mutate(Macron = NumMarcon / total, LePen = NumLePen / total) %>%
+  mutate(Department = recode(Department, `Corse-du-Sud` = "Corse du Sud")) %>%
+  mutate(Department = recode(Department, `Côte-d'Or` = "Cote-Dor")) %>%
+  mutate(Department = recode(Department, `Côtes-d'Armor` = "Cotes-Darmor")) %>%
+  mutate(Department = recode(Department, `Val-d'Oise` = "Val-Doise"))
+
+names(electionResults)[1] <- "region"
+  
+electionResults$region <- stri_trans_general(electionResults$region, "Latin-ASCII")
+#https://stackoverflow.com/questions/13610319/convert-accented-characters-into-ascii-character
+```
+
+```{r}
+France <- map_data("france")
+```
+
+```{r}
+MapResults <- left_join(electionResults, unemploymentRate)
+MapResults <- left_join(MapResults, FrenchEconomicDataset)
+MapResults <- left_join(x = MapResults, y = France)
+```
+
+```{r}
+MapResults2 <- fortify(MapResults, region = region)
+```
+
+```{r}
+selection <- MapResults2 %>%
+  select(region, NumMarcon, NumLePen, lat, long, unemployment, 
+         Population, Aging_Index, Number_of_Companies, LifeExpectancy_Female, LifeExpectancy_Male, Wage, City) %>%
+  group_by(region) %>%
+  summarise(NumMarcon = sum(NumMarcon), NumLePen = sum(NumLePen), 
+            unemployment = percent(mean(unemployment)/100, accuracy = .1), 
+            Population = mean(Population), Aging_Index = mean(Aging_Index), 
+            Number_of_Companies = mean(Number_of_Companies), 
+            LifeExpectancy_Female = mean(LifeExpectancy_Female), 
+            LifeExpectancy_Male = mean(LifeExpectancy_Male), 
+            Wage = mean(Wage)) %>%
+  mutate(total = NumMarcon + NumLePen) %>%
+  mutate(Macron = percent((NumMarcon / total), accuracy = .11), LePen = percent((NumLePen / total), accuracy = .11)) %>%
+  select(region, Macron, LePen, unemployment, 
+         Population, Aging_Index, Number_of_Companies, LifeExpectancy_Female, LifeExpectancy_Male, Wage)
+
+#selection <- left_join(selection, unemploymentRate %>% distinct(region, unemployment))
+
+France_values <- function(x) {
+  if(is.null(x)) return(NULL)
+  #y <- selection %>% filter(region == x$region)
+  row = selection[selection$region == unique(x$region), ]
+  #paste0("Percent Marcon: ", row$perMacron, "<br />",
+         #"Unemployment Rate: ", row$unemployment, "<br />",
+         #"Population: " , row$Population, "<br />")
+  sprintf("<table width='100%%'>%s</table>",
+          paste0("<tr><td style='text-align:left'>", names(row),
+         ":</td><td style='text-align:right'>", row, collapse="</td></tr>"))
+}
+```
+
+```{r}
+titles <- MapResults %>%
+  group_by(City) %>%
+  summarise(long = mean(long), lat = mean(lat)) %>%
+  drop_na()
+```
+
+
+```{r, results = 'asis'}
+ElectionMap <- MapResults2 %>%
+  ggvis(x = ~long, y = ~lat) %>%
+  group_by(region) %>%
+  layer_paths(fill=input_select(label="Vote Share by Candidate",
+                                choices= selection %>%
+                                select(Macron, LePen) %>%
+                                colnames %>% sort,
+                                id = "Vote",
+                                map=as.name),
+              strokeWidth:=0.5, stroke:="black") %>%
+  layer_text(data = titles, text := ~City, fontSize := 20) %>%
+  scale_numeric("fill", range=c("#FFFFCC" ,"red"), domain = c(.1, .9)) %>%
+  add_tooltip(France_values, "hover") %>%
+  hide_axis("x") %>% hide_axis("y") %>%
+  add_legend("fill", title="Percent of Vote") %>%
+  set_options(width=960, height=700, keep_aspect=TRUE)
+ElectionMap
+```
+
+
+
+

@@ -1,0 +1,246 @@
+---
+title: "2017 French Presidential Election"
+author: "Connor Putnam"
+runtime: shiny
+output:
+  tufte::tufte_html: default
+---
+
+```{r include=FALSE}
+library(ggvis)
+library(shiny)
+```
+
+# Marcon Won by Large Margins
+
+::: {.fullwidth}
+The second round of voting for the 2017 French Presidential Election was held on May 7th 2017. It was between centralist Emmanuel Marcon of the EnMarche! party, and right-wing Marine Le Pen of the National Front party. The interactive map below shows the overwhelming support for Emmanuel Marcon in almost all Departments across Metropolitan France. The overall vote share was Marcon at 66.1% and Le Pen at 33.9%.
+
+Le Pen did her best in the Northeastern rust belt and the South, but still only managed to carry two departments overall, Aisne and Pas-de-Calais. 
+Whereas Macron's centralist platform appealed most to those in larger cities.
+:::
+
+
+
+```{r include=FALSE, echo = FALSE, fig.cap = "Data scource:  French Ministry of the Interior"}
+#library(dplyr)
+library(scales)
+library(tidyverse)
+library(ggthemes)
+library(RColorBrewer)
+library(mapproj)
+library(gridExtra)
+library(ggpubr)
+
+election2 <- read.csv("FrenchPresidentialElection.csv")
+election2 <- as_tibble(election2)
+
+election2$region <- as.character(election2$region)
+
+selection <- election2 %>%
+  select(region, NumMarcon, NumLePen, lat, long, unemployment, 
+         Population, Aging_Index, Number_of_Companies, LifeExpectancy_Female, LifeExpectancy_Male, Wage, City) %>%
+  group_by(region) %>%
+  summarise(NumMarcon = sum(NumMarcon), NumLePen = sum(NumLePen), 
+            unemployment = percent(mean(unemployment)/100, accuracy = .1), 
+            Population = mean(Population), Aging_Index = mean(Aging_Index), 
+            Number_of_Companies = mean(Number_of_Companies), 
+            LifeExpectancy_Female = mean(LifeExpectancy_Female), 
+            LifeExpectancy_Male = mean(LifeExpectancy_Male), 
+            Wage = mean(Wage)) %>%
+  mutate(total = NumMarcon + NumLePen) %>%
+  mutate(Macron = percent((NumMarcon / total), accuracy = .11), LePen = percent((NumLePen / total), accuracy = .11)) %>%
+  select(region, Macron, LePen)
+
+election2 <- election2 %>% rename(Department = region)
+selection <- selection %>% rename(Department = region)
+
+France_values <- function(x) {
+  if(is.null(x)) return(NULL)
+  #row = selection[selection$region == unique(x$region), ]
+  row <- selection %>% filter(Department == x$Department)
+  sprintf("<table width='100%%'>%s</table>",
+          paste0("<tr><td style='text-align:left'>", names(row),
+         ":</td><td style='text-align:right'>", row, collapse="</td></tr>"))
+}
+
+library(rgeos)
+
+
+titles <- election2 %>%
+  group_by(City) %>%
+  summarise(long = median(long), lat = median(lat)) %>%
+  drop_na()
+
+
+
+
+ggvis_plot <- election2 %>%
+  ggvis(~long, ~lat) %>%
+  group_by(Department) %>%
+  layer_paths(fill=input_select(label="Vote Share by Candidate",
+                                choices= selection %>%
+                                select(Macron, LePen) %>%
+                                colnames %>% sort,
+                                id = "Vote",
+                                map = as.name),
+              strokeWidth:=0.5, stroke:="grey") %>%
+  layer_text(text := ~City, fontSize := 20) %>%
+  #layer_points(data = titles, x = ~long, y = ~lat, size := 20) %>%
+  
+  scale_numeric("fill", range=c("#FFFFCC" ,"#E31A1C"), domain = c(.1, .9)) %>%
+  
+  add_tooltip(France_values, "hover") %>%
+  hide_axis("x") %>% hide_axis("y") %>%
+  add_legend("fill", title="Percent of Vote", format = "%") %>%
+  set_options(width = 300, height = 200, padding = padding(100, 150, 100, 50))
+```
+
+
+```{r echo=FALSE, fig.cap = "Data scource:  French Ministry of the Interior"}
+library(shiny)
+
+ui <- fluidPage(
+  fluidRow(
+    
+    uiOutput("ggvis_ui") 
+    
+  ),
+  fluidRow(
+    
+    ggvisOutput("ggvis")
+  
+  )
+)
+
+
+server <- function(input, output, session)  {
+  ggvis_plot %>%  
+    bind_shiny("ggvis", "ggvis_ui")
+}
+
+shinyApp(ui, server, options = list(height = 750, width = 800))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+unemployemntPlot <- ggplot(election2, aes(long, lat)) +
+  geom_polygon(aes(group = Department, fill = unemployment/100)) + 
+  theme_map() +
+  geom_path(data = election2, 
+            aes(long, lat, group = group), 
+              color = "black", size = 0.1) + 
+  scale_fill_distiller(palette = "YlGn", direction = 1, label = 
+                         percent_format(accuracy = 1)) +
+  theme(legend.title = element_text(color = "Grey10", size = 10), legend.position = "bottom") +
+  labs(fill = "Unemployment Rate") +
+  labs(title = "Unemployment Rates by Department") +
+  theme(plot.title = element_text(size = 12)) +
+  coord_map() +
+  theme(panel.background = element_rect(fill = "#fffff9"), plot.background = element_rect(fill = "#fffff9"))
+
+LePenPlot <- ggplot(election2, aes(long, lat)) +
+  geom_polygon(aes(group = Department, fill = LePen)) + 
+  theme_map() +
+  geom_path(data = election2, 
+            aes(long, lat, group = group), 
+              color = "black", size = 0.1) + 
+  scale_fill_distiller(palette = "BuPu", direction = 1, label = 
+                         percent_format(accuracy = 1)) +
+  theme(legend.title = element_text(color = "Grey10", size = 10), legend.position = "bottom") +
+  labs(fill = "Percent of Vote") +
+  labs(title = "Vote Share for LePen") +
+  theme(plot.title = element_text(size = 12)) +
+  coord_map() +
+  theme(panel.background = element_rect(fill = "#fffff9"), plot.background = element_rect(fill = "#fffff9"))
+```
+
+```{marginfigure}
+Data scource:  French Ministry of the Interior
+```
+
+# The Economic Influence
+
+::: {.fullwidth}
+It is widely understood that incredibly wide margins in Paris along with the socialist leaning West Coast landed Marcon his huge victory margins across the country. But with this said Le Pen's advancement to the second round of elections in the first place was surprising to many, given that the National Front party has never made it to this stage before. Below it can be seen that her support might be correlated with high unemployment rates in the Northeast and the South.
+:::
+
+```{r echo=FALSE, fig.width = 10, fig.height = 5, fig.fullwidth = TRUE, fig.cap = "Data scource: The National Institute of Statistics and Economic Studies of France", warning=FALSE, message=FALSE, cache=TRUE}
+grid.arrange(unemployemntPlot, LePenPlot, ncol = 2)
+```
+
+```{r include=FALSE}
+FirstRound <- as.data.frame(cbind(c("Macron", "LePen", "Fillon", "Melenchon", "Hamon", 
+                "Dupont-Aignan", "Lassalle", "Poutou", "Asselineau", 
+                "Arthaud", "Cheminade"), 
+                c(8656346,7678491,7212995,7059951,2291288,
+                  1695000,435301,394505,332547,232384,65586)))
+SecondRound <- as.data.frame(cbind(c("Macron", "LePen"), c(20743128,10638475)))
+
+FirstRound$V2 <- as.numeric(as.character(FirstRound$V2))
+FirstRound <- as_tibble(FirstRound) %>%
+  rename(Name = V1,
+         Total = V2) %>%
+  mutate(Percent = Total / sum(Total))
+
+SecondRound$V2 <- as.numeric(as.character(SecondRound$V2))
+SecondRound <- as_tibble(SecondRound) %>%
+  rename(Name = V1,
+         Total = V2) %>%
+  mutate(Percent = Total / sum(Total))
+
+#FirstRound <- FirstRound %>% 
+ # mutate(ToHighlight = ifelse(Name == "Macron" | Name == "LePen", "yes", "no"))
+
+FirstRoundPlot <- ggplot(FirstRound, aes(Name, Percent, fill = Name)) + 
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = c("#B3B3B3", "#B3B3B3", "#B3B3B3", "#B3B3B3", "#B3B3B3", 
+                               "#B3B3B3", "#B3B3B3", "#1F78B4", "#FFD92F", "#B3B3B3", 
+                               "#B3B3B3"), guide = FALSE) +
+  #scale_fill_brewer(palette = "Paired") +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  scale_x_discrete(limits = FirstRound$Name) +
+  ylab("Percent of the Vote") + xlab("Candidate") +
+  theme(legend.title = element_text(color = "Grey10", size = 10)) +
+  labs(fill = "Candidate") +
+  labs(title = "First Round of Voting") +
+  theme(plot.title = element_text(size = 12)) +
+  theme_tufte() +
+  theme(axis.text.x=element_text(angle=75,vjust=0.5)) +
+  theme(panel.background = element_rect(fill = "#fffff9"), plot.background = element_rect(fill = "#fffff9"))
+
+
+SecondRoundPlot <- ggplot(SecondRound, aes(Name, Percent, fill = Name)) + 
+  geom_bar(stat = "identity", fill  = c("#FFD92F", "#1F78B4")) +
+  scale_fill_brewer(palette = "Set2") +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  scale_x_discrete(limits = SecondRound$Name) +
+  ylab("Percent of the Vote") + xlab("Candidate") +
+  theme(legend.title = element_text(color = "Grey10", size = 10)) +
+  labs(fill = "Candidate") +
+  labs(title = "Second Round of Voting") +
+  theme(plot.title = element_text(size = 12)) +
+  theme_tufte() +
+  theme(panel.background = element_rect(fill = "#fffff9"), plot.background = element_rect(fill = "#fffff9"))
+```
+
+
+# Votes Did Not Shift Evenly
+
+Another aspect that contributed to Marcon's landslide victory was that most of the votes form the first round shifted to him and not Le Pen
+
+
+```{marginfigure}
+When you look at the first round, notice how close the top four candidates were. This might have been one of the contributing factors that lead to Le Pen proceeding to the final round. 
+```
+
+```{r echo=FALSE, fig.height=8, fig.width=10, , fig.cap = "Data scource:  French Ministry of the Interior"}
+grid.arrange(FirstRoundPlot, SecondRoundPlot, ncol =2)
+```
+
+
+```{r}
+
+```
+
+
+
